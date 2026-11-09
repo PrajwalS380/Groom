@@ -3,8 +3,12 @@ Generates favicon / app icons / web manifest / Open Graph image.
 
     python tools/make_brand_assets.py
 
-Uses the OFL fonts in tools/fonts and the processed traditional cut-out master
-(source-images/processed/couple-traditional-cutout-master.png).
+    python tools/make_brand_assets.py --og      (only the link-preview image)
+
+Uses the OFL fonts in tools/fonts. The groom side's link-preview image shows the couple by the bonfire
+(source-images/processed/couple-bonfire-og.jpg — a metadata-free crop of the family's photograph, kept
+out of the repository like the other originals); without it, the traditional cut-out master
+(source-images/processed/couple-traditional-cutout-master.png) is used as on the bride side's site.
 """
 from __future__ import annotations
 
@@ -94,6 +98,28 @@ def og_image() -> Image.Image:
     img = Image.blend(img, Image.composite(overlay, img, Image.new("L", (W, H), 120)), 0.5)
     d = ImageDraw.Draw(img)
 
+    photo = ROOT / "source-images" / "processed" / "couple-bonfire-og.jpg"
+    if photo.exists():
+        # the couple by the bonfire on the right, melting into the night on its left and at the frame
+        pw, px = 640, W - 640
+        ph_img = Image.open(photo).convert("RGB")
+        ph_img = ph_img.resize((pw, round(ph_img.height * pw / ph_img.width)), Image.LANCZOS)
+        top = max(0, (ph_img.height - H) // 2 - 6)
+        ph_img = ph_img.crop((0, top, pw, top + H))
+        # a touch warmer and deeper, to sit with the gold and night green of the card
+        r_, g_, b_ = ph_img.split()
+        ph_img = Image.merge("RGB", (r_.point(lambda v: min(255, int(v * 1.04))), g_, b_.point(lambda v: int(v * 0.94))))
+        mask = Image.new("L", (pw, H), 255)
+        md = ImageDraw.Draw(mask)
+        for i in range(150):  # eased fade along the left edge
+            t = i / 150
+            md.line((i, 0, i, H), fill=int(255 * (t * t * (3 - 2 * t))))
+        vign = Image.new("L", (pw, H), 0)
+        ImageDraw.Draw(vign).rectangle((40, 30, pw + 60, H - 30), fill=255)
+        mask = Image.composite(mask, Image.new("L", (pw, H), 0), vign.filter(ImageFilter.GaussianBlur(26)))
+        img.paste(ph_img, (px, 0), mask)
+        return _og_text(img)
+
     # couple cut-out on the right, anchored to the bottom edge
     cut = Image.open(ROOT / "source-images" / "processed" / "couple-traditional-cutout-master.png").convert("RGBA")
     ch = 575
@@ -104,6 +130,17 @@ def og_image() -> Image.Image:
     ImageDraw.Draw(halo).ellipse((cx + 40, 40, cx + cw - 20, H + 200), fill=150)
     img.paste(Image.new("RGB", (W, H), (150, 96, 52)), (0, 0), halo.filter(ImageFilter.GaussianBlur(90)))
     img.paste(cut, (cx, H - ch), cut)
+    return _og_text(img)
+
+
+def _og_text(img: Image.Image) -> Image.Image:
+    """The card's frame and words, over whichever picture is on the right."""
+    W, H = img.size
+    d = ImageDraw.Draw(img)
+    # a little shade behind the words
+    shade = Image.new("L", (W, H), 0)
+    ImageDraw.Draw(shade).rectangle((0, 0, 560, H), fill=90)
+    img.paste(Image.new("RGB", (W, H), NIGHT), (0, 0), shade.filter(ImageFilter.GaussianBlur(60)))
     d = ImageDraw.Draw(img)
 
     # hairline frame
@@ -148,7 +185,12 @@ FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
 
 
 def main() -> None:
+    import sys
+
     (PUBLIC / "og").mkdir(parents=True, exist_ok=True)
+    if "--og" in sys.argv:
+        og_image().save(PUBLIC / "og" / "og-image.jpg", quality=88, optimize=True, progressive=True)
+        return
     (PUBLIC / "icons").mkdir(parents=True, exist_ok=True)
     (PUBLIC / "favicon.svg").write_text(FAVICON_SVG, encoding="utf-8")
     monogram_icon(256).resize((32, 32), Image.LANCZOS).save(PUBLIC / "favicon-32.png")
